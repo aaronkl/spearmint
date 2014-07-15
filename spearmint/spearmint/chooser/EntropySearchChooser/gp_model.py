@@ -178,8 +178,8 @@ def LogLinear(ls, x1, x2=None, grad=False):
 
 def grad_LogLinear(ls, x1, x2=None):
     if x2 is not None:
-        return grad_Linear(ls, np.log(x1 * COVAR_MULTIPLCATION_CONST + 1e-15), np.log(x2 * COVAR_MULTIPLICATION_CONST + 1e-15)) / (x2 * COVAR_MULTIPLICATION_CONST)
-    return grad_Linear(ls, np.log(x1 * COVAR_MULTIPLCATION_CONST + 1e-15), None) / (x1 * COVAR_MULTIPLICATION_CONST)
+        return grad_Linear(ls, np.log(x1 * COVAR_MULTIPLICATION_CONST + 1e-15), np.log(x2 * COVAR_MULTIPLICATION_CONST + 1e-15)) / (x2 * COVAR_MULTIPLICATION_CONST)
+    return grad_Linear(ls, np.log(x1 * COVAR_MULTIPLICATION_CONST + 1e-15), None) / (x1 * COVAR_MULTIPLICATION_CONST)
 
 def grad_Polynomial3(ls, x1, x2=None):
     return _polynomial3_raw(ls, x1, x2, value=False, grad=True)
