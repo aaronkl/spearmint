@@ -98,7 +98,7 @@ class EntropySearchChooser(object):
         self._path = path
         self._with_plotting = bool(with_plotting)
         self._index = index
-        self._save_incumbent = True
+        self._save_incumbents = True
 
     def _real_init(self, dims, comp, values, durations):
 
