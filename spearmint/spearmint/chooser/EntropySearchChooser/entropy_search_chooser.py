@@ -9,16 +9,16 @@ import numpy.random as npr
 import scipy.optimize as spo
 
 from util import unpack_args
-from multiprocessing import Pool
 from helpers import log
 
-from .gp_model import GPModel, fetchKernel, getNumberOfParameters
-from .entropy import Entropy
-from .entropy_with_costs import EntropyWithCosts
-from .hyper_parameter_sampling import sample_hyperparameters, sample_hyperparameters_gp
-from .support import compute_pmin_bins, sample_from_proposal_measure
-import traceback
+from gp_model import GPModel, fetchKernel, getNumberOfParameters
+from entropy import Entropy
+from entropy_with_costs import EntropyWithCosts
+from hyper_parameter_sampling import sample_hyperparameters, sample_hyperparameters_gp
+from support import compute_pmin_bins, sample_from_proposal_measure
 
+import logging
+import traceback
 import tempfile
 import cPickle
 import pickle
@@ -59,9 +59,9 @@ class EntropySearchChooser(object):
             transformation: integer defining how the ES acquisition function with costs is transformed
 
         '''
-
+        logging.getLogger().setLevel(logging.DEBUG)
         seed = np.random.randint(65000)
-        log("using seed: " + str(seed))
+        logging.debug("using seed: " + str(seed))
         np.random.seed(seed)
 
         self.pending_samples = pending_samples
@@ -98,6 +98,7 @@ class EntropySearchChooser(object):
         self._path = path
         self._with_plotting = bool(with_plotting)
         self._index = index
+        self._save_incumbent = True
 
     def _real_init(self, dims, comp, values, durations):
 
@@ -134,7 +135,7 @@ class EntropySearchChooser(object):
         self._comp = grid[complete, :]
         if self._comp.shape[0] < 2:
             c = grid[candidates[0]]
-            log("Evaluating: " + str(c))
+            logging.debug("Evaluating: " + str(c))
             return candidates[0]
 
         self._vals = values[complete]
@@ -143,37 +144,36 @@ class EntropySearchChooser(object):
 
         if not self._is_initialized:
             self._real_init(dimension, self._comp, self._vals, durs)
-        log("Initialize Gaussian processes")
+
         #initialize Gaussian processes
         self._initialize_models(durs)
+        logging.debug("Initialize Gaussian processes")
 
         cand = grid[candidates, :]
 
-        log("Computing incumbent.")
+        logging.debug("Computing incumbent.")
         mins = self._find_local_minima(self._comp, self._vals, self._models, cand)
         pmin = self._compute_pmin_probabilities(self._models, mins)
         incumbent = mins[np.argmax(pmin)]
 
-        #selected_candidates = cand[:self._num_of_candidates]
         selected_candidates = np.vstack((cand, mins))
-        #TODO: remove already evaluated points?
 
         #Compute entropy of the selected candidates
         overall_entropy = np.zeros(selected_candidates.shape[0])
 
-        log("Computing acquisition function values for all candidates for all models.")
+        logging.debug("Computing acquisition function values for all candidates for all models.")
         for i in xrange(0, len(self._models)):
             overall_entropy += self._entropy_search(selected_candidates,
                                                     self._models[i],
                                                     self._cost_models[i])
-            log("Model number " + str(i) + " complete.")
         overall_entropy /= len(self._models)
 
+        #Take candidate that maximizes the acquisition function
         best_cand = np.argmax(overall_entropy)
 
         if(self._with_plotting):
             try:
-                log("Visualizing ...")
+                logging.debug("Visualizing ...")
                 if cand.shape[1] == 1:
                     #one dimensional problem
 #                    self._visualizer.plot_projected_gp(self._comp, self._vals, self._cost_models[0], True)
@@ -192,33 +192,37 @@ class EntropySearchChooser(object):
                                                                 incumbent=incumbent,
                                                                 rep=self._rep_points)
                 else:
-                    log("No Visualizer available for more than 2 dimensional problems.")
+                    logging.debug("No Visualizer available for more than 2 dimensional problems.")
             except Exception, e:
-                log("Visualizer crashed. Exception: " + traceback.format_exc())
+                logging.debug("Visualizer crashed. Exception: " + traceback.format_exc())
 
         '''
             Debug Information
         '''
         if self._withCosts:
-            log("EntropyWithCosts")
+            logging.debug("EntropyWithCosts")
         else:
-            log("Entropy")
-        log("Incumbent: " + str(incumbent))
-        log("Number of candidates: " + str(selected_candidates.shape[0]))
-        log("Number of hallucinated values: " + str(self._num_of_hal_vals))
-        log("Number of draws from the gp: " + str(self._number_of_pmin_samples))
-        log("Number of representer points: " + str(self._num_of_rep_points))
-        log("Number of chain length of representer points: " + str(self._chain_length_rep))
-        log("Chain length for Sampling the hyperparameters of the GP: " + str(self._mcmc_iters))
-        log("Evaluating: " + str(selected_candidates[best_cand]))
-        log("Transformation " + str(self._transformation))
-        log("Covar " + str(self._covar))
-        log("Cost Covar " + str(self._cost_covar))
+            logging.debug("Entropy")
+        logging.debug("Incumbent: " + str(incumbent))
+        logging.debug("Number of candidates: " + str(selected_candidates.shape[0]))
+        logging.debug("Number of hallucinated values: " + str(self._num_of_hal_vals))
+        logging.debug("Number of draws from the gp: " + str(self._number_of_pmin_samples))
+        logging.debug("Number of representer points: " + str(self._num_of_rep_points))
+        logging.debug("Number of chain length of representer points: " + str(self._chain_length_rep))
+        logging.debug("Chain length for Sampling the hyperparameters of the GP: " + str(self._mcmc_iters))
+        logging.debug("Evaluating: " + str(selected_candidates[best_cand]))
+        logging.debug("Transformation " + str(self._transformation))
+        logging.debug("Covar " + str(self._covar))
+        logging.debug("Cost Covar " + str(self._cost_covar))
 
-#        filename = self._path + "/incumbent_" + str(self._comp.shape[0] - 2) + ".pkl"
-#        output = open(filename, 'wb')
-        #pickle.dump((self._comp, self._vals, self._hyper_samples, incumbent, selected_candidates, self._rep_points), output)
-#        pickle.dump(incumbent, output)
+        if(self._save_incumbents):
+            dir_name = "/incumbent_" + str(self._covar) + "_" + str(self._cost_covar)
+            if not os.path.exists(self._path + dir_name):
+                    os.mkdir(self._path + dir_name)
+            filename = self._path + dir_name + "/incumbent_" + str(self._comp.shape[0] - 2) + ".pkl"
+            output = open(filename, 'wb')
+
+            pickle.dump(incumbent, output)
 
         return (len(candidates) + 1, selected_candidates[best_cand])
 
@@ -245,7 +249,7 @@ class EntropySearchChooser(object):
         #Get last sampled hyper-parameters
         (_, noise, amp2, ls) = self._hyper_samples[len(self._hyper_samples) - 1]
 
-        log("last hyper parameters: " +
+        logging.debug("last hyper parameters: " +
             str(self._hyper_samples[len(self._hyper_samples) - 1]))
 
         self._hyper_samples = sample_hyperparameters(self._mcmc_iters * self._gp_inter_sample_distance,
@@ -339,7 +343,7 @@ class EntropySearchChooser(object):
             value = optimized[1]
             if value > objective_function(sampled_points[i]):
                 #happens sometimes, something with the Hessian not being positive definite
-                log('WARNING: Result of optimizer worse than initial guess! Ignoring result.')
+                logging.error('WARNING: Result of optimizer worse than initial guess! Ignoring result.')
                 optimized = sampled_points[i]
             else:
                 #we care only for the point, not for the value or debug messages
