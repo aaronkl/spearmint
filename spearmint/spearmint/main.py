@@ -142,7 +142,13 @@ def main():
         exit(0)
 
     experiment_config = args[0]
-    expt_dir  = os.path.dirname(os.path.realpath(experiment_config))
+    # HPOlib mod:
+    # We link experiment config, so using realpath will cause th whole output to be in
+    # the experiment setup dir
+    #
+    # expt_dir  = os.path.dirname(os.path.realpath(experiment_config))
+    expt_dir  = os.path.dirname(os.path.normpath(os.path.join(os.getcwd(), experiment_config)))
+
     log("Using experiment configuration: " + experiment_config)
     log("experiment dir: " + expt_dir)
 
