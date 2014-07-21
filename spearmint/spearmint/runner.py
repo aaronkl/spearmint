@@ -127,7 +127,12 @@ def run_python_job(job):
             raise Exception("Unknown parameter type.")
 
     # Load up this module and run
-    module  = __import__(job.name)
+    # HPOlib: We have to modify this, because otherwise out HPOlib.cv cannot be imported
+    modules = job.name.rsplit(".", 1)
+    fromlist = [] if len(modules) == 1 else [modules[1]]
+    module = __import__(job.name, fromlist=fromlist)
+    # module  = __import__(job.name)
+
     result = module.main(job.id, params)
 
     log("Got result %f\n" % (result))
