@@ -4,25 +4,25 @@ Created on 18.11.2013
 @author: Aaron Klein, Simon Bartels
 '''
 
+import os
+
+import logging
+import traceback
+import cPickle
+
 import numpy as np
 import numpy.random as npr
 import scipy.optimize as spo
 
 from util import unpack_args
 from helpers import log
+from sobol_lib import i4_sobol_generate
 
 from gp_model import GPModel, fetchKernel, getNumberOfParameters
 from entropy import Entropy
 from entropy_with_costs import EntropyWithCosts
 from hyper_parameter_sampling import sample_hyperparameters, sample_hyperparameters_gp
 from support import compute_pmin_bins, sample_from_proposal_measure
-
-import logging
-import traceback
-import tempfile
-import cPickle
-import pickle
-import os
 
 
 def init(expt_dir, arg_string):
@@ -132,7 +132,10 @@ class EntropySearchChooser(object):
             self._visualizer = vis(comp.shape[0] - 2, self.expt_dir)
 
     def next(self, grid, values, durations, candidates, pending, complete):
+
         self._comp = grid[complete, :]
+
+        #Not enough point to build the GPs yet
         if self._comp.shape[0] < 2:
             c = grid[candidates[0]]
             logging.debug("Evaluating: " + str(c))
@@ -151,10 +154,13 @@ class EntropySearchChooser(object):
 
         cand = grid[candidates, :]
 
-        logging.debug("Computing incumbent.")
-        mins = self._find_local_minima(self._comp, self._vals, self._models, cand)
-        pmin = self._compute_pmin_probabilities(self._models, mins)
-        incumbent = mins[np.argmax(pmin)]
+        #compute incumbent
+#         mins = self._find_local_minima(self._comp, self._vals, self._models, cand)
+#         pmin = self._compute_pmin_probabilities(self._models, mins)
+#         incumbent = mins[np.argmax(pmin)]
+
+        mins, values = self._compute_incumbent(num_of_points=500)
+        incumbent = mins[np.argmin(values)]
 
         selected_candidates = np.vstack((cand, mins))
 
@@ -222,7 +228,7 @@ class EntropySearchChooser(object):
             filename = self._path + dir_name + "/incumbent_" + str(self._comp.shape[0] - 2) + ".pkl"
             output = open(filename, 'wb')
 
-            pickle.dump(incumbent, output)
+            cPickle.dump(incumbent, output)
 
         return (len(candidates) + 1, selected_candidates[best_cand])
 
@@ -285,101 +291,120 @@ class EntropySearchChooser(object):
 
             self._cost_models.append(cost_gp)
 
-    def _compute_pmin_probabilities(self, model_list, candidates):
-        '''
-        Computes the probability for each candidate to be the minimum. Ideally candidates was computed with
-        #_find_local_minima.
-        Args:
-            model_list: a list of Gaussian process models
-            candidates: a numpy matrix of candidates
-        Returns:
-            a numpy vector containing for each candidate the probability to be the minimum
-        '''
+    def _compute_incumbent(self, num_of_points):
 
-        pmin = np.zeros(candidates.shape[0])
-        number_of_models = len(model_list)
+        #create sobol grid over the input space
+        sobol_grid = i4_sobol_generate(self._comp.shape[1], num_of_points, 1)
 
-        for model in model_list:
-            m, L = model.getCholeskyForJointSample(candidates)
-            #use different Omega for different GPs
-            Omega = npr.normal(0, 1, (self._number_of_pmin_samples, candidates.shape[0]))
-            pmin += compute_pmin_bins(Omega, m, L) / number_of_models
-
-        return pmin
-
-    def _find_local_minima(self, evaluated, values, model_list, candidates):
-        '''
-        Tries to find as many local minima as possible of the #_objective_function.
-        Args:
-            evaluated: numpy matrix containing the points that have been evaluated so far
-            values: the corresponding values that have been observed
-            model_list: a list of Gaussian processes
-            candidates: a numpy matrix of candidates
-        Returns:
-            a numpy matrix of local minima
-        '''
-
-        def objective_function(x, gradients=False):
-            if np.any(x < 0) or np.any(x > 1):
-                return -np.infty
-            return self._objective_function(x, model_list, gradients)
-
-        #TODO: Could it be a good idea start with the maximum instead? To find more local minima?
-        #TODO: Actually we should take the best candidate of all candidates in the Sobol sequence.
-        starting_point = evaluated[np.argmin(values)]
-        # sample points from our proposal measure as starting points for the minimizer
-        sampled_points = sample_from_proposal_measure(starting_point, objective_function,
-                                     self._incumbent_number_of_minima, self._incumbent_inter_sample_distance)
         #optimization bounds
         opt_bounds = []
-        for i in xrange(0, starting_point.shape[0]):
+        for i in xrange(0, sobol_grid.shape[0]):
             opt_bounds.append((0, 1))
-        minima = []
 
-        for i in range(0, sampled_points.shape[0]):
-            optimized = spo.fmin_l_bfgs_b(self._objective_function, sampled_points[i].flatten(), args=(model_list, True),
-                                          bounds=opt_bounds, disp=0)
-            #consistency check
-            value = optimized[1]
-            if value > objective_function(sampled_points[i]):
-                #happens sometimes, something with the Hessian not being positive definite
-                logging.error('WARNING: Result of optimizer worse than initial guess! Ignoring result.')
-                optimized = sampled_points[i]
-            else:
-                #we care only for the point, not for the value or debug messages
-                optimized = optimized[0]
+        minima = np.zeros([sobol_grid.shape[1], sobol_grid.shape[0]])
+        minima_values = np.zeros([sobol_grid.shape[1]])
 
-            #remove duplicates
-            append = True
-            for j in range(0, len(minima)):
-                if np.allclose(minima[j], optimized):
-                    append = False
-                    break
-            if append:
-                minima.append(optimized)
+        #optimize each point of the sobol grid locally
+        logging.debug("start local optimization")
+        for i in xrange(0, sobol_grid.shape[1]):
+            point, func, info = spo.fmin_l_bfgs_b(self._objective_function, sobol_grid[:, i].flatten(), bounds=opt_bounds)
+            minima[i] = point
+            minima_values[i] = func
+        logging.debug("finished local optimization")
+        return minima, minima_values
 
-        return np.array(minima)
-
-    def _objective_function(self, x, model_list, gradients=False):
+#     def _compute_pmin_probabilities(self, model_list, candidates):
+#         '''
+#         Computes the probability for each candidate to be the minimum. Ideally candidates was computed with
+#         #_find_local_minima.
+#         Args:
+#             model_list: a list of Gaussian process models
+#             candidates: a numpy matrix of candidates
+#         Returns:
+#             a numpy vector containing for each candidate the probability to be the minimum
+#         '''
+# 
+#         pmin = np.zeros(candidates.shape[0])
+#         number_of_models = len(model_list)
+# 
+#         for model in model_list:
+#             m, L = model.getCholeskyForJointSample(candidates)
+#             #use different Omega for different GPs
+#             Omega = npr.normal(0, 1, (self._number_of_pmin_samples, candidates.shape[0]))
+#             pmin += compute_pmin_bins(Omega, m, L) / number_of_models
+# 
+#         return pmin
+# 
+#     def _find_local_minima(self, evaluated, values, model_list, candidates):
+#         '''
+#         Tries to find as many local minima as possible of the #_objective_function.
+#         Args:
+#             evaluated: numpy matrix containing the points that have been evaluated so far
+#             values: the corresponding values that have been observed
+#             model_list: a list of Gaussian processes
+#             candidates: a numpy matrix of candidates
+#         Returns:
+#             a numpy matrix of local minima
+#         '''
+# 
+#         def objective_function(x, gradients=False):
+#             if np.any(x < 0) or np.any(x > 1):
+#                 return -np.infty
+#             return self._objective_function(x, model_list, gradients)
+# 
+#         starting_point = evaluated[np.argmin(values)]
+#         # sample points from our proposal measure as starting points for the minimizer
+#         sampled_points = sample_from_proposal_measure(starting_point, objective_function,
+#                                      self._incumbent_number_of_minima, self._incumbent_inter_sample_distance)
+#         #optimization bounds
+#         opt_bounds = []
+#         for i in xrange(0, starting_point.shape[0]):
+#             opt_bounds.append((0, 1))
+#         minima = []
+# 
+#         for i in range(0, sampled_points.shape[0]):
+#             optimized = spo.fmin_l_bfgs_b(self._objective_function, sampled_points[i].flatten(), args=(model_list, True),
+#                                           bounds=opt_bounds, disp=0)
+#             #consistency check
+#             value = optimized[1]
+#             if value > objective_function(sampled_points[i]):
+#                 #happens sometimes, something with the Hessian not being positive definite
+#                 logging.error('WARNING: Result of optimizer worse than initial guess! Ignoring result.')
+#                 optimized = sampled_points[i]
+#             else:
+#                 #we care only for the point, not for the value or debug messages
+#                 optimized = optimized[0]
+# 
+#             #remove duplicates
+#             append = True
+#             for j in range(0, len(minima)):
+#                 if np.allclose(minima[j], optimized):
+#                     append = False
+#                     break
+#             if append:
+#                 minima.append(optimized)
+# 
+#         return np.array(minima)
+# 
+#     def _objective_function(self, x, model_list, gradients=False):
+#         '''
+#         Computes the sum of mean and standard deviation of each Gaussian process in x.
+#         Args:
+#             x: a numpy vector (not a matrix)
+#             model_list: a list of Gaussian processes
+#             gradients: whether to compute the gradients
+#         Returns:
+#             the value or if gradients is True additionally a numpy vector containing the gradients
+#         '''
+# 
+#         return self._objective_function_naive(x, model_list, gradients)
+# 
+    def _objective_function(self, x):
         '''
         Computes the sum of mean and standard deviation of each Gaussian process in x.
         Args:
             x: a numpy vector (not a matrix)
             model_list: a list of Gaussian processes
-            gradients: whether to compute the gradients
-        Returns:
-            the value or if gradients is True additionally a numpy vector containing the gradients
-        '''
-
-        return self._objective_function_naive(x, model_list, gradients)
-
-    def _objective_function_naive(self, x, model_list, gradients=False):
-        '''
-        Computes the sum of mean and standard deviation of each Gaussian process in x.
-        Args:
-            x: a numpy vector (not a matrix)
-            model_list: a list of Gaussian processes
-            gradients: whether to compute the gradients
         Returns:
             the value or if gradients is True additionally a numpy vector containing the gradients
         '''
@@ -388,17 +413,15 @@ class EntropySearchChooser(object):
         #will contain mean and standard deviation prediction for each GP
         mean_std = np.zeros([self._mcmc_iters, 2, 1])
         for i in range(0, self._mcmc_iters):
-            mean_std[i] = model_list[i].predict(x, True)
+            mean_std[i] = self._models[i].predict(x, True)
 
         #take square root to get standard deviation
         mean_std[:, 1] = np.sqrt(mean_std[:, 1])
-        if not gradients:
-            return np.sum(mean_std) / self._mcmc_iters
 
         mean_std_gradients = np.zeros([self._mcmc_iters, x.shape[1]])
 
         for i in range(0, self._mcmc_iters):
-            mg, vg = model_list[i].getGradients(x[0])
+            mg, vg = self._models[i].getGradients(x[0])
             #getGradient returns the gradient of the variance - to get the gradients of the standard deviation
             # we need to apply chain rule (s(x)=sqrt[v(x)] => s'(x) = 1/2 * v'(x) / sqrt[v(x)]
             stdg = 0.5 * vg / mean_std[i, 1]

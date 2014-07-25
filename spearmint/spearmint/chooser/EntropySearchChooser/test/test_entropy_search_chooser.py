@@ -25,6 +25,8 @@ class Test(AbstractTest):
             gp = GPModel(self.X, self.y, hyper[0], hyper[1], hyper[2], hyper[3])
             self._models.append(gp)
 
+
+    def test_compute_incumbent(self):
     def xtest_call_minimizer(self):
         '''
         Asserts that this function produces indeed something better than the starting point.
