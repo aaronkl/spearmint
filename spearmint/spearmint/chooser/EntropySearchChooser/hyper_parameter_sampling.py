@@ -80,7 +80,7 @@ def _sample_mean_amp_noise(comp, vals, cov_func, start_point, ls):
     default_noise = 1e-3
     #if we get a start point that consists only of two variables that means we don't care for the noise
     noiseless = (start_point.shape[0] == 2)
-    
+
     def logprob(hypers):
         mean = hypers[0]
         amp2 = hypers[1]

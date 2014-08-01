@@ -6,6 +6,9 @@ Created on 02.12.2013
 This class extends EntropySearch to be used for big data sets. I.e. it incorporates the cost models
 and it ASSUMES that the first value of a point is the data set size.
 '''
+
+from sampling import sample_representer_points
+
 import numpy as np
 from .support import compute_expected_improvement, compute_kl_divergence, sample_from_proposal_measure
 from scipy.stats import norm
@@ -43,7 +46,9 @@ class EntropyWithCosts():
         starting_point = points[:, idx]
         starting_point = starting_point[1:]
 
-        representers = sample_from_proposal_measure(starting_point, self._sample_measure, num_of_rep_points - 1, chain_length)
+        #representers = sample_from_proposal_measure(starting_point, self._sample_measure, num_of_rep_points - 1, chain_length)
+        representers = sample_representer_points(starting_point, self._sample_measure, num_of_rep_points - 1, chain_length)
+
         self._representer_points = np.empty([num_of_rep_points, comp.shape[1]])
         self._log_proposal_vals = np.zeros(num_of_rep_points)
 
@@ -92,14 +97,14 @@ class EntropyWithCosts():
         '''
         scale = np.max([1e1, scale])
         if self._transformation == 1:
-	    if kl_divergence < 0:
-		return kl_divergence * scale
+            if kl_divergence < 0:
+                return kl_divergence * scale
             return kl_divergence / scale
         elif self._transformation == 2:
             return np.exp(kl_divergence) / scale
         elif self._transformation == 3:
-	    if kl_divergence < 0:
-		return kl_divergence * np.log(scale)
+            if kl_divergence < 0:
+                return kl_divergence * np.log(scale)
             return kl_divergence / np.log(scale)
         elif self._transformation == 4:
             return np.exp(kl_divergence) / np.log(scale)
@@ -122,10 +127,8 @@ class EntropyWithCosts():
             return -np.inf
 
         #set first value to one
-        x = np.insert(x, 0, 1)
-
+        x = np.insert(np.array(x), 0, 1)
         v = compute_expected_improvement(x, self._gp)
-
         return np.log(v + 1e-10)
 
     def _compute_pmin_old(self, gp):

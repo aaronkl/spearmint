@@ -240,7 +240,6 @@ class EntropySearchChooser(object):
                                                  self._num_of_rep_points, self._chain_length_rep, self._transformation)
             for i in xrange(0, cand.shape[0]):
                 entropy[i] = entropy_estimator.compute(cand[i])
-
         else:
             entropy_estimator = Entropy(model, self._num_of_hal_vals, self._number_of_pmin_samples, self._num_of_rep_points, self._chain_length_rep)
             entropy = map(entropy_estimator.compute, cand)
