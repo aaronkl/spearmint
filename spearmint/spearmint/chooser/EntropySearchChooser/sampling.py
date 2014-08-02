@@ -12,9 +12,9 @@ def sample_representer_points(starting_point, log_proposal_measurement, number_o
 
     nwalkers = number_of_points
     ndim = starting_point.shape[0]
-
     sampler = emcee.EnsembleSampler(nwalkers, ndim, log_proposal_measurement)
-    pos, prob, state = sampler.run_mcmc(starting_point, 100)
+    p0 = [starting_point for i in xrange(nwalkers)]
+    pos, prob, state = sampler.run_mcmc(p0, 100)
 
     sampler.reset()
 

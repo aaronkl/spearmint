@@ -12,7 +12,6 @@ from hyper_parameter_sampling import handle_slice_sampler_exception
 def compute_expected_improvement(cand, gp):
 
     incumbent = np.min(gp.getValues())
-
     (func_m, func_v) = gp.predict_vector(cand)
 
     func_s = np.sqrt(func_v)
